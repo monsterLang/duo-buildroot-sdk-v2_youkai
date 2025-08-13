@@ -12,12 +12,41 @@
 	snsr-reset = <&portc 8 GPIO_ACTIVE_LOW>, <&portc 8 GPIO_ACTIVE_LOW>, <&portc 8 GPIO_ACTIVE_LOW>;
 };
 
+/* uart0 uses gpioa 16/17 for lcd dc/reset */
+&uart0 {
+	status = "disabled";
+};
+
 &spi2 {
 	status = "okay";
 
+	/*
 	spidev@0 {
 		status = "okay";
 	};
+	*/
+
+	/delete-node/ spidev@0;
+
+	gc9306: gc9306@0{
+		compatible = "sitronix,gc9306";
+		reg = <0>;
+		status = "okay";
+		spi-max-frequency = <48000000>;
+		spi-cpol;
+		spi-cpha;
+		rotate = <90>;
+		fps = <30>;
+		rgb;
+		buswidth = <8>;
+
+		dc = <&porta 16 GPIO_ACTIVE_HIGH>;	//DC
+		reset = <&porta 17 GPIO_ACTIVE_HIGH>; //RES
+		led = <&porta 14 GPIO_ACTIVE_HIGH>; //BL
+
+		debug = <0x0>;
+	};
+
 };
 
 &uart1 {
@@ -41,3 +70,35 @@
        clock-frequency = <100000>;
 };
 
+// [+] youaki, add for speaker
+&i2s2 {
+	status = "okay";
+	#sound-dai-cells = <0>;
+};
+
+&ethernet0 {
+	status = "disabled";
+};
+
+/ {
+	/* codec */
+	max98357a: max98357a {
+		#sound-dai-cells = <0>;
+		compatible = "maxim,max98357a";
+		status = "okay";
+
+		/* this may be necessary, otherwise driver will not load */
+		sdmode-gpios = <&porta 15 0>;
+		/* max98357a has gain & sd_mode gpio. but codec driver just has sdmode */
+
+		clocks = <&i2s_mclk 0>;
+		clock-names = "i2sclk";
+	};
+
+	/* sound_ext3 use external codec */
+	sound_max98357a {
+		compatible = "cvitek,cv1835-max98357a";
+		cvi,card_name = "cv1835_max98357a";
+	};
+
+};

@@ -374,7 +374,8 @@ static int cvi_i2s_hw_params(struct snd_pcm_substream *substream,
 		if (!strcmp(substream->pcm->card->shortname, "cv182x_adc") ||
 			!strcmp(substream->pcm->card->shortname, "cv182x_dac") ||
 			!strcmp(substream->pcm->card->shortname, "cv182xa_adc") ||
-			!strcmp(substream->pcm->card->shortname, "cv182xa_dac")) {
+			!strcmp(substream->pcm->card->shortname, "cv182xa_dac") ||
+			!strcmp(substream->pcm->card->shortname, "cv1835_max98357a")) {
 			dev_err(dev->dev, "24 bit resolution is not supported\n");
 			return -EINVAL;
 		}
@@ -402,7 +403,8 @@ static int cvi_i2s_hw_params(struct snd_pcm_substream *substream,
 		if (!strcmp(substream->pcm->card->shortname, "cv182x_adc") ||
 			!strcmp(substream->pcm->card->shortname, "cv182x_dac") ||
 			!strcmp(substream->pcm->card->shortname, "cv182xa_adc") ||
-			!strcmp(substream->pcm->card->shortname, "cv182xa_dac")
+			!strcmp(substream->pcm->card->shortname, "cv182xa_dac") ||
+			!strcmp(substream->pcm->card->shortname, "cv1835_max98357a")
 			) {
 			dev_err(dev->dev, "32 bit resolution is not supported\n");
 			return -EINVAL;
@@ -492,7 +494,8 @@ static int cvi_i2s_hw_params(struct snd_pcm_substream *substream,
 	case 16000:
 	case 32000:
 		if (!strcmp(substream->pcm->card->shortname, "cv182xa_adc") ||
-			!strcmp(substream->pcm->card->shortname, "cv182xa_dac"))
+			!strcmp(substream->pcm->card->shortname, "cv182xa_dac") ||
+			!strcmp(substream->pcm->card->shortname, "cv1835_max98357a"))
 			audio_clk = CVI_16384_MHZ;
 		else
 			audio_clk = CVI_24576_MHZ;
@@ -569,7 +572,8 @@ static int cvi_i2s_hw_params(struct snd_pcm_substream *substream,
 			break;
 		}
 	} else if (!strcmp(substream->pcm->card->shortname, "cv182xa_adc") ||
-			!strcmp(substream->pcm->card->shortname, "cv182xa_dac")) {
+			!strcmp(substream->pcm->card->shortname, "cv182xa_dac") ||
+			!strcmp(substream->pcm->card->shortname, "cv1835_max98357a")) {
 		/* cv182xa internal adc codec need dynamic MCLK frequency input */
 
 		switch (config->sample_rate) {

@@ -216,3 +216,15 @@ config FB_TFT_WATTEROTT
 	depends on FB_TFT
 	help
 	  Generic Framebuffer support for WATTEROTT
+
+config FB_TFT_GC9306
+	tristate "FB driver for the GC9306 LCD Controller"
+	depends on FB_TFT
+	help
+	  Generic Framebuffer support for GC9306
+
+config FB_TFT_ILI9488
+	tristate "FB driver for the ILI9488 LCD Controller"
+	depends on FB_TFT
+	help
+	  Generic Framebuffer support for ILI9488
