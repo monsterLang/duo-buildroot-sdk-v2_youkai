@@ -407,12 +407,27 @@ function build_tdl_sdk()
     cp -a "${TPU_SDK_INSTALL_PATH}"/bin/* "${SYSTEM_OUT_DIR}"/usr/bin/tpu/
   fi
 
-  if [[ -d "${TDL_SDK_PATH}/install/bin" ]]; then
-    mkdir -p "${SYSTEM_OUT_DIR}"/usr/bin/ai
-    cp -a "${TDL_SDK_PATH}"/install/bin/sample_* "${SYSTEM_OUT_DIR}"/usr/bin/ai/
+  lib_dir="${SYSTEM_OUT_DIR}/lib"
+  app_dir="${SYSTEM_OUT_DIR}/usr/bin/ai"
+
+  tdl_lib="${TDL_SDK_PATH}/install/${CHIP_ARCH}/lib"
+  tdl_utils="${TDL_SDK_PATH}/install/${CHIP_ARCH}/sample/utils/lib"
+  tdl_app="${TDL_SDK_PATH}/install/${CHIP_ARCH}/bin/c"
+
+  if [[ -d "${tdl_lib}" ]]; then
+    [[ ! -d "${lib_dir}" ]] && mkdir -p "${lib_dir}"
+    cp -af ${tdl_lib}/lib*.so "${lib_dir}"/
   fi
 
-  cp -a "${TDL_SDK_PATH}"/install/lib/libcvi_tdl.so "${SYSTEM_OUT_DIR}"/lib/
+  if [[ -d "${tdl_utils}" ]]; then
+    [[ ! -d "${lib_dir}" ]] && mkdir -p "${lib_dir}"
+    cp -af "${tdl_utils}"/lib*.so "${lib_dir}"/
+  fi
+
+  if [[ -d "${tdl_app}" ]]; then
+    [[ ! -d "${app_dir}" ]] && mkdir -p "${app_dir}"
+    cp -af "${tdl_app}"/sample_* "${app_dir}"/
+  fi
 }
 
 function clean_tdl_sdk()
@@ -565,6 +580,8 @@ function build_3rd_party()
     "uv"
     "cvi-json-c"
     "cvi-miniz"
+    "curl"
+    "opencv4.5"
   )
 
   for name in "${oss_list[@]}"
@@ -689,6 +706,10 @@ function envs_sdk_ver()
     CROSS_COMPILE="$CROSS_COMPILE_UCLIBC"
     CROSS_COMPILE_PATH="$CROSS_COMPILE_PATH_UCLIBC"
     SYSROOT_PATH="$SYSROOT_PATH_UCLIBC"
+  elif [ "$SDK_VER" = musl ]; then
+    CROSS_COMPILE="$CROSS_COMPILE_MUSL"
+    CROSS_COMPILE_PATH="$CROSS_COMPILE_PATH_MUSL"
+    SYSROOT_PATH="$SYSROOT_PATH_MUSL"
   elif [ "$SDK_VER" = glibc_riscv64 ]; then
     CROSS_COMPILE="$CROSS_COMPILE_GLIBC_RISCV64"
     CROSS_COMPILE_PATH="$CROSS_COMPILE_PATH_GLIBC_RISCV64"
@@ -806,6 +827,7 @@ function cvi_setup_env()
   export CROSS_COMPILE_64=aarch64-linux-gnu-
   export CROSS_COMPILE_32=arm-linux-gnueabihf-
   export CROSS_COMPILE_UCLIBC=arm-cvitek-linux-uclibcgnueabihf-
+  export CROSS_COMPILE_MUSL=arm-none-linux-musleabihf-
   export CROSS_COMPILE_64_NONOS=aarch64-elf-
   export CROSS_COMPILE_64_NONOS_RISCV64=riscv64-unknown-elf-
   export CROSS_COMPILE_GLIBC_RISCV64=riscv64-unknown-linux-gnu-
@@ -816,6 +838,7 @@ function cvi_setup_env()
   CROSS_COMPILE_PATH_64="$TOOLCHAIN_PATH"/gcc/gcc-linaro-7.3.1-2018.05-x86_64_aarch64-linux-gnu
   CROSS_COMPILE_PATH_32="$TOOLCHAIN_PATH"/gcc/gcc-linaro-6.3.1-2017.05-x86_64_arm-linux-gnueabihf
   CROSS_COMPILE_PATH_UCLIBC="$TOOLCHAIN_PATH"/gcc/arm-cvitek-linux-uclibcgnueabihf
+  CROSS_COMPILE_PATH_MUSL="$TOOLCHAIN_PATH"/gcc/arm-gnu-toolchain-11.3.rel1-x86_64-arm-none-linux-musleabihf
   CROSS_COMPILE_PATH_64_NONOS="$TOOLCHAIN_PATH"/gcc/gcc-linaro-6.3.1-2017.05-x86_64_aarch64-elf
   CROSS_COMPILE_PATH_64_NONOS_RISCV64="$TOOLCHAIN_PATH"/gcc/riscv64-elf-x86_64
   CROSS_COMPILE_PATH_GLIBC_RISCV64="$TOOLCHAIN_PATH"/gcc/riscv64-linux-x86_64
@@ -830,6 +853,7 @@ function cvi_setup_env()
   pathprepend "$CROSS_COMPILE_PATH_GLIBC_RISCV64"/bin
   pathprepend "$CROSS_COMPILE_PATH_MUSL_RISCV64"/bin
   pathappend "$CROSS_COMPILE_PATH_UCLIBC"/bin
+  pathappend "$CROSS_COMPILE_PATH_MUSL"/bin
 
   # Check ccache is enable or not
   pathremove "$BUILD_PATH"/output/bin
@@ -860,6 +884,7 @@ function cvi_setup_env()
   SYSROOT_PATH_64="$RAMDISK_PATH"/sysroot/sysroot-glibc-linaro-2.23-2017.05-aarch64-linux-gnu
   SYSROOT_PATH_32="$RAMDISK_PATH"/sysroot/sysroot-glibc-linaro-2.23-2017.05-arm-linux-gnueabihf
   SYSROOT_PATH_UCLIBC="$RAMDISK_PATH"/sysroot/sysroot-uclibc
+  SYSROOT_PATH_MUSL="$CROSS_COMPILE_PATH_MUSL"/arm-none-linux-musleabihf/sysroot
   SYSROOT_PATH_GLIBC_RISCV64="$RAMDISK_PATH"/sysroot/sysroot-glibc-riscv64
   SYSROOT_PATH_MUSL_RISCV64="$RAMDISK_PATH"/sysroot/sysroot-musl-riscv64
   SYSROOT_PATH="$SYSROOT_PATH_64"
@@ -900,6 +925,8 @@ function cvi_setup_env()
   export SYSTEM_OUT_DIR
   export CROSS_COMPILE_PATH
   # buildroot config
+
+  TARGET_TOP_CONFIG="$BUILD_PATH/boards/${CHIP_ARCH,,}/$PROJECT_FULLNAME/${PROJECT_FULLNAME}_defconfig"
 
   if [ -z "${MV_BOARD// }" ]; then
     print_error "No MV_BOARD specified!"
@@ -951,6 +978,7 @@ cvi_print_env()
   echo -e "  CROSS_COMPILE_PREFIX: \e[34m$CROSS_COMPILE\e[0m"
   echo -e "  ENABLE_BOOTLOGO: $ENABLE_BOOTLOGO"
   echo -e "  Flash layout xml: $FLASH_PARTITION_XML"
+  echo -e "  Target Top Config: $TARGET_TOP_CONFIG"
   echo -e "  Sensor tuning bin: $SENSOR_TUNING_PARAM"
   echo -e "  Output path: \e[33m$OUTPUT_DIR\e[0m"
   echo -e ""
@@ -1069,6 +1097,7 @@ function build_info()
   export MILKV_BOARD=${MILKV_BOARD}
   export MILKV_BOARD_CONFIG=${MILKV_BOARD_CONFIG}
 
+  print_info "Target Top Config: $TARGET_TOP_CONFIG"
   print_info "Target Board: ${MILKV_BOARD}"
   print_info "Target Board Storage: ${STORAGE_TYPE}"
   print_info "Target Board Config: ${MILKV_BOARD_CONFIG}"

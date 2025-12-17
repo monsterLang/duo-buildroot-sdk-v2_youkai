@@ -887,6 +887,13 @@ static void bulkOutCmplMain(struct usb_ep *ep, struct usb_request *req)
 			      0x13); // Response mode and enable WDT
 		break;
 
+#ifdef CONFIG_CMD_REPAIR_NAND
+	case CVI_USB_REPAIR_NAND:
+		NOTICE("CVI_USB_REPAIR_NAND\n");
+		run_command("repair_nand", 0);
+		sendInReq(length, CVI_USB_REPAIR_NAND, bulkResetOutReq, NULL, 0);
+		break;
+#endif // CONFIG_CMD_REPAIR_NAND
 	default:
 		VERBOSE("token not defined:[%d]\n", msg->header.token);
 		resetOutReq();
@@ -1358,7 +1365,7 @@ uint32_t plat_cvi_gpio_read(uint32_t mask)
 }
 #endif
 
-#if defined(USB_PHY_DETECTION)
+
 uint8_t usb_vbus_det(void)
 {
 	uint8_t vbus;
@@ -1371,7 +1378,7 @@ uint8_t usb_vbus_det(void)
 
 	return vbus;
 }
-#endif
+
 
 void acm_patch_id(unsigned short vid, unsigned short pid)
 {

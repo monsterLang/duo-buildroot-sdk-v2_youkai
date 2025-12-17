@@ -265,10 +265,19 @@ sms_sc2336p_1L:
 sms_sc223a_1L:
 	$(call MAKE_SENSOR, ${@})
 
+sms_sc231hai:
+	$(call MAKE_SENSOR, ${@})
+
 sms_sc4336:
 	$(call MAKE_SENSOR, ${@})
 
 sms_sc4336p:
+	$(call MAKE_SENSOR, ${@})
+
+sms_sc4336p_1L:
+	$(call MAKE_SENSOR, ${@})
+
+sms_sc4336p1_1L:
 	$(call MAKE_SENSOR, ${@})
 
 sms_sc5336_2L:
@@ -296,6 +305,9 @@ soi_f53:
 	$(call MAKE_SENSOR, ${@})
 
 soi_f352:
+	$(call MAKE_SENSOR, ${@})
+
+soi_h65:
 	$(call MAKE_SENSOR, ${@})
 
 soi_k306:

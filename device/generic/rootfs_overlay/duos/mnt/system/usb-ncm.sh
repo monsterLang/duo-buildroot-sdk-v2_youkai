@@ -27,7 +27,7 @@ sleep 0.5
 
 /etc/uhubon.sh device >> /tmp/ncm.log 2>&1
 /etc/run_usb.sh probe ncm >> /tmp/ncm.log 2>&1
-/etc/run_usb.sh start ncm >> /tmp/ncm.log 2>&1
+/etc/run_usb.sh start >> /tmp/ncm.log 2>&1
 
 sleep 0.5
 ifconfig usb0 192.168.42.1

@@ -757,75 +757,6 @@ EXIT:
 	_isp_preraw_fe_dma_dump(ictx, raw_num);
 }
 
-static void _isp_tpu_dma_dump(struct isp_ctx *ictx, enum cvi_isp_raw raw_num)
-{
-	u8 i = 0;
-	char str[64] = "tpu";
-
-	vi_pr(VI_INFO, "***************%s_%d************************\n", str, raw_num);
-	for (i = 0; i < OFFLINE_RAW_BUF_NUM; i++)
-		vi_pr(VI_INFO, "bayer_tpu_le(0x%llx)\n", isp_bufpool[raw_num].bayer_tpu_le[i]);
-
-	if (ictx->isp_pipe_cfg[raw_num].is_hdr_on) {
-		for (i = 0; i < OFFLINE_RAW_BUF_NUM; i++)
-			vi_pr(VI_INFO, "bayer_tpu_se(0x%llx)\n", isp_bufpool[raw_num].bayer_tpu_se[i]);
-	}
-
-	vi_pr(VI_INFO, "*************************************************\n");
-}
-
-void _isp_tpu_dma_setup(struct isp_ctx *ictx, enum cvi_isp_raw raw_num)
-{
-	uint64_t bufaddr = 0;
-	uint32_t bufsize = 0;
-	uint8_t  buf_num = 0;
-	struct isp_buffer *b;
-
-	if (!ictx->isp_pipe_enable[raw_num] || !ictx->isp_pipe_cfg[raw_num].is_ai_isp)
-		return;
-
-	if (ictx->isp_pipe_cfg[raw_num].is_yuv_bypass_path)
-		return;
-
-	for (buf_num = 0; buf_num < OFFLINE_PRE_BE_BUF_NUM; buf_num++) {
-		DMA_SETUP_2(ISP_BLK_ID_DMA_CTL6, raw_num);
-		b = vmalloc(sizeof(*b));
-		if (b == NULL) {
-			vi_pr(VI_ERR, "be_wdma_le isp_buf_%d vmalloc size(%zu) fail\n",
-				buf_num, sizeof(*b));
-			return;
-		}
-		memset(b, 0, sizeof(*b));
-		b->addr = bufaddr;
-		b->raw_num = raw_num;
-		b->ir_idx = buf_num;
-		b->is_ext = INTERNAL_BUFFER;
-		b->src = TPU_OUT;
-		isp_bufpool[raw_num].bayer_tpu_le[buf_num] = b->addr;
-		isp_buf_queue(&bnr_ai_isp_out_q[raw_num][ISP_FE_CH0], b);
-
-		if (ictx->isp_pipe_cfg[raw_num].is_hdr_on) {
-			DMA_SETUP_2(ISP_BLK_ID_DMA_CTL7, raw_num);
-			b = vmalloc(sizeof(*b));
-			if (b == NULL) {
-				vi_pr(VI_ERR, "be_wdma_le isp_buf_%d vmalloc size(%zu) fail\n",
-					buf_num, sizeof(*b));
-				return;
-			}
-			memset(b, 0, sizeof(*b));
-			b->addr = bufaddr;
-			b->raw_num = raw_num;
-			b->ir_idx = buf_num;
-			b->is_ext = INTERNAL_BUFFER;
-			b->src = TPU_OUT;
-			isp_bufpool[raw_num].bayer_tpu_se[buf_num] = b->addr;
-			isp_buf_queue(&bnr_ai_isp_out_q[raw_num][ISP_FE_CH1], b);
-		}
-	}
-
-	_isp_tpu_dma_dump(ictx, raw_num);
-}
-
 void _isp_preraw_be_dma_setup(struct isp_ctx *ictx, enum cvi_isp_raw raw_max)
 {
 	uint64_t bufaddr = 0;
@@ -1189,7 +1120,6 @@ void _vi_dma_setup(struct isp_ctx *ictx, enum cvi_isp_raw raw_max)
 		if (!ictx->isp_pipe_enable[raw_num])
 			continue;
 		_isp_preraw_fe_dma_setup(ictx, raw_num);
-		_isp_tpu_dma_setup(ictx, raw_num);
 	}
 
 	_isp_preraw_be_dma_setup(ictx, raw_max);
@@ -1379,29 +1309,6 @@ void _vi_pre_fe_get_dma_size(struct isp_ctx *ictx, enum cvi_isp_raw  raw_num)
 	}
 EXIT:
 	return;
-}
-
-void _vi_tpu_get_dma_size(struct isp_ctx *ictx, enum cvi_isp_raw raw_max)
-{
-	uint32_t bufsize = 0;
-	uint8_t  buf_num = 0;
-	enum cvi_isp_raw raw_num = ISP_PRERAW_A;
-
-	//Be out dma
-	if (!ictx->isp_pipe_enable[raw_num] || !ictx->isp_pipe_cfg[raw_num].is_ai_isp)
-		return;
-	if (ictx->isp_pipe_cfg[raw_num].is_yuv_bypass_path)
-		return;
-
-	for (buf_num = 0; buf_num < OFFLINE_PRE_BE_BUF_NUM; buf_num++) {
-		bufsize = ispblk_dma_buf_get_size(ictx, ISP_BLK_ID_DMA_CTL6, raw_num);
-		_mempool_pop(bufsize);
-
-		if (ictx->isp_pipe_cfg[raw_num].is_hdr_on) {
-			bufsize = ispblk_dma_buf_get_size(ictx, ISP_BLK_ID_DMA_CTL7, raw_num);
-			_mempool_pop(bufsize);
-		}
-	}
 }
 
 void _vi_pre_be_get_dma_size(struct isp_ctx *ictx, enum cvi_isp_raw raw_max)
@@ -1643,7 +1550,6 @@ void _vi_get_dma_buf_size(struct isp_ctx *ictx, enum cvi_isp_raw raw_max)
 			continue;
 
 		_vi_pre_fe_get_dma_size(ictx, raw_num);
-		_vi_tpu_get_dma_size(ictx, raw_num);
 	}
 
 	_vi_pre_be_get_dma_size(ictx, raw_max);
@@ -1804,9 +1710,14 @@ static void _isp_yuvtop_init(struct cvi_vi_dev *vdev)
 	ispblk_pre_ee_config(ictx, true);
 	ispblk_ee_config(ictx, false);
 #ifdef COVER_WITH_BLACK
-	memset(ycur_data, 0, sizeof(ycur_data));
-	ispblk_ycur_config(ictx, false, 0, ycur_data);
-	ispblk_ycur_enable(ictx, true, 0);
+	if (!ictx->suspend_resume_en) {
+		memset(ycur_data, 0, sizeof(ycur_data));
+		ispblk_ycur_config(ictx, false, 0, ycur_data);
+		ispblk_ycur_enable(ictx, true, 0);
+	} else {
+		ispblk_ycur_config(ictx, false, 0, ycur_data);
+		ispblk_ycur_enable(ictx, false, 0);
+	}
 #else
 	ispblk_ycur_config(ictx, false, 0, ycur_data);
 	ispblk_ycur_enable(ictx, false, 0);
@@ -2856,6 +2767,10 @@ void _vi_scene_ctrl(struct cvi_vi_dev *vdev, enum cvi_isp_raw *raw_max)
 		}
 	}
 
+#ifdef CONFIG_PM_SLEEP
+	ctx->is_fbc_on = false;
+#endif
+
 	vi_pr(VI_INFO, "Total_chn_num=%d, rawb_chnstr_num=%d\n",
 			ctx->total_chn_num, ctx->rawb_chnstr_num);
 }
@@ -3096,6 +3011,12 @@ int vi_start_streaming(struct cvi_vi_dev *vdev)
 	_vi_dma_setup(ctx, raw_max);
 	_vi_dma_set_sw_mode(ctx);
 
+	if (ctx->suspend_resume_en) {
+		pre_fe_tuning_update(ctx, ISP_PRERAW_A);
+		pre_be_tuning_update(ctx, ISP_PRERAW_A);
+		postraw_tuning_update(ctx, ISP_PRERAW_A);
+	}
+
 	vi_pr(VI_INFO, "ISP scene path, be_off=%d, post_off=%d, slice_buff_on=%d\n",
 			ctx->is_offline_be, ctx->is_offline_postraw, ctx->is_slice_buf_on);
 
@@ -3300,9 +3221,6 @@ int vi_stop_streaming(struct cvi_vi_dev *vdev)
 					vfree(isp_b);
 				}
 			}
-
-			while ((isp_b = isp_buf_remove(&bnr_ai_isp_out_q[i][j])) != NULL)
-				vfree(isp_b);
 		}
 	}
 
@@ -3364,7 +3282,7 @@ int vi_stop_streaming(struct cvi_vi_dev *vdev)
 	isp_raw_dump_deinit();
 
 	// reset at stop for next run.
-	isp_reset(&vdev->ctx);
+	//isp_reset(&vdev->ctx);
 	for (raw_num = ISP_PRERAW_A; raw_num < gViCtx->total_dev_num; raw_num++) {
 		isp_streaming(&vdev->ctx, false, raw_num);
 		if (vdev->ctx.isp_pipe_cfg[raw_num].is_mux &&
@@ -3736,6 +3654,61 @@ static void _postraw_outbuf_enque(struct cvi_vi_dev *vdev, const enum cvi_isp_ra
 			ispblk_dma_config(ctx, ISP_BLK_ID_DMA_CTL46, raw_num, tmp_addr);
 		else
 			ispblk_dma_config(ctx, ISP_BLK_ID_DMA_CTL47, raw_num, tmp_addr);
+	}
+}
+
+static void buf_num_check(struct cvi_vi_dev *vdev, const enum cvi_isp_raw raw_num,
+						const enum cvi_isp_pre_chn_num chn_num)
+{
+	struct isp_ctx *ctx = &vdev->ctx;
+
+	if (!ctx->isp_pipe_cfg[raw_num].is_hdr_on)
+		return;
+	if (_is_be_post_online(ctx)) {//fe->dram->be->post
+		struct isp_buffer *b = NULL;
+		struct isp_queue *fe_out_q = (chn_num == ISP_FE_CH0) ?
+						&pre_out_queue[raw_num] : &pre_out_se_queue[raw_num];
+		struct isp_queue *be_in_q = (chn_num == ISP_FE_CH0) ? &pre_be_in_q : &pre_be_in_se_q[raw_num];
+
+		if (abs((vdev->pre_fe_frm_num[raw_num][ISP_FE_CH0] -
+			vdev->pre_fe_frm_num[raw_num][ISP_FE_CH1]) > 1)) {
+			vi_pr(VI_ERR, "drop frame and remove be_in buffer\n");
+			vi_pr(VI_ERR, "fe%d_chn0_frm_num = %d, fe%d_chn1_frm_num = %d\n", raw_num,
+				vdev->pre_fe_frm_num[raw_num][ISP_FE_CH0],
+				raw_num, vdev->pre_fe_frm_num[raw_num][ISP_FE_CH1]);
+
+			b = isp_buf_remove(be_in_q);
+
+			if (b == NULL) {
+				vi_pr(VI_ERR, "Pre_fe_%d chn_num_%d outbuf is empty\n", raw_num, chn_num);
+				return;
+			}
+			isp_buf_queue(fe_out_q, b);
+			--vdev->pre_fe_frm_num[raw_num][chn_num];
+		}
+	} else if (_is_fe_be_online(ctx)) {//fe->be->dram->post or on the fly mode
+		struct isp_buffer *b = NULL;
+		struct isp_queue *be_out_q = (chn_num == ISP_FE_CH0) ?
+						&pre_be_out_q : &pre_be_out_se_q;
+		struct isp_queue *post_in_q = (chn_num == ISP_FE_CH0) ?
+						&post_in_queue : &post_in_se_queue;
+		if (abs((vdev->pre_be_frm_num[raw_num][ISP_FE_CH0] -
+			vdev->pre_be_frm_num[raw_num][ISP_FE_CH1]) > 1)) {
+			vi_pr(VI_ERR, "drop frame and remove post_in_q buffer\n");
+			vi_pr(VI_ERR, "be%d_chn0_frm_num = %d, be%d_chn1_frm_num = %d\n", raw_num,
+				vdev->pre_fe_frm_num[raw_num][ISP_FE_CH0],
+				raw_num, vdev->pre_fe_frm_num[raw_num][ISP_FE_CH1]);
+
+			b = isp_buf_remove(post_in_q);
+
+			if (b == NULL) {
+				vi_pr(VI_ERR, "Pre_be_%d chn_num_%d outbuf is empty\n", raw_num, chn_num);
+				return;
+			}
+
+			isp_buf_queue(be_out_q, b);
+			--vdev->pre_be_frm_num[raw_num][chn_num];
+		}
 	}
 }
 
@@ -4160,14 +4133,6 @@ static inline void _post_ctrl_update(struct cvi_vi_dev *vdev, const enum cvi_isp
 		isp_first_frm_reset(ctx, 0);
 	}
 
-	if (ctx->suspend_resume_en) {
-		if (vdev->preraw_first_frm[raw_num]) {
-			vdev->preraw_first_frm[raw_num] = false;
-			isp_first_frm_reset(ctx, 1);
-		} else {
-			isp_first_frm_reset(ctx, 0);
-		}
-	}
 }
 
 static uint8_t _pre_be_sts_in_use_chk(struct cvi_vi_dev *vdev, const enum cvi_isp_raw raw_num, const u8 chn_num)
@@ -4489,6 +4454,7 @@ YUV_POSTRAW:
 			vi_tuning_clut_update(ctx, raw_num);
 			vi_tuning_dci_update(ctx, raw_num);
 			vi_tuning_drc_update(ctx, raw_num);
+			vi_tuning_cacp_update(ctx, raw_num);
 
 			if (!ctx->is_rgbmap_sbm_on) {
 				//Update rgbmap dma addr
@@ -4637,9 +4603,6 @@ void vi_resume(struct cvi_vi_dev *vdev)
 		atomic_set(&vdev->isp_streamon, 1);
 		atomic_set(&vdev->isp_streamoff, 0);
 
-		isp_first_frm_reset(&vdev->ctx, 1);
-		vdev->preraw_first_frm[0] = true;
-
 		vi_set_dev_attr(0, &tmp_dev_attr);
 		vi_enable_dev(0);
 		vi_create_pipe(0, &tmp_pipe_attr);
@@ -4685,23 +4648,23 @@ int vi_create_thread(struct cvi_vi_dev *vdev, enum E_VI_TH th_id)
 	if (vdev->vi_th[th_id].w_thread == NULL) {
 		switch (th_id) {
 		case E_VI_TH_PRERAW:
-			memcpy(vdev->vi_th[th_id].th_name, "cvitask_isp_pre", sizeof(vdev->vi_th[th_id].th_name));
+			memcpy(vdev->vi_th[th_id].th_name, "cvitask_isp_pre", strlen("cvitask_isp_pre") + 1);
 			vdev->vi_th[th_id].th_handler = _vi_preraw_thread;
 			break;
 		case E_VI_TH_VBLANK_HANDLER:
-			memcpy(vdev->vi_th[th_id].th_name, "cvitask_isp_blank", sizeof(vdev->vi_th[th_id].th_name));
+			memcpy(vdev->vi_th[th_id].th_name, "cvitask_isp_blank", strlen("cvitask_isp_blank") + 1);
 			vdev->vi_th[th_id].th_handler = _vi_vblank_handler_thread;
 			break;
 		case E_VI_TH_ERR_HANDLER:
-			memcpy(vdev->vi_th[th_id].th_name, "cvitask_isp_err", sizeof(vdev->vi_th[th_id].th_name));
+			memcpy(vdev->vi_th[th_id].th_name, "cvitask_isp_err", strlen("cvitask_isp_err") + 1);
 			vdev->vi_th[th_id].th_handler = _vi_err_handler_thread;
 			break;
 		case E_VI_TH_EVENT_HANDLER:
-			memcpy(vdev->vi_th[th_id].th_name, "vi_event_handler", sizeof(vdev->vi_th[th_id].th_name));
+			memcpy(vdev->vi_th[th_id].th_name, "vi_event_handler", strlen("vi_event_handler") + 1);
 			vdev->vi_th[th_id].th_handler = _vi_event_handler_thread;
 			break;
 		case E_VI_TH_RUN_TPU:
-			memcpy(vdev->vi_th[th_id].th_name, "vi_tpu_handler", sizeof(vdev->vi_th[th_id].th_name));
+			memcpy(vdev->vi_th[th_id].th_name, "vi_tpu_handler", strlen("vi_tpu_handler") + 1);
 			vdev->vi_th[th_id].th_handler = _vi_run_tpu_thread;
 			break;
 		default:
@@ -4843,9 +4806,6 @@ static void _vi_sw_init(struct cvi_vi_dev *vdev)
 			INIT_LIST_HEAD(&bnr_ai_isp_in_q[i][j].rdy_queue);
 			bnr_ai_isp_in_q[i][j].num_rdy = 0;
 			bnr_ai_isp_in_q[i][j].raw_num = i;
-			INIT_LIST_HEAD(&bnr_ai_isp_out_q[i][j].rdy_queue);
-			bnr_ai_isp_out_q[i][j].num_rdy = 0;
-			bnr_ai_isp_out_q[i][j].raw_num = i;
 		}
 
 		atomic_set(&vdev->bnr_run_tpu[i], 0);
@@ -7659,25 +7619,16 @@ static struct isp_buffer *bnr_ai_isp_launch_tpu(struct cvi_vi_dev *vdev,
 	int timeout = 300;
 	int ret = 0;
 	struct isp_ctx *ctx = &vdev->ctx;
-	struct isp_buffer *out_buf = NULL;
 
 	if (!ctx->isp_pipe_cfg[raw_num].is_ai_isp)
 		return NULL;
 
-	out_buf = isp_buf_remove(&bnr_ai_isp_out_q[raw_num][chn_num]);
-	if (out_buf == NULL) {
-		vi_pr(VI_WARN, "bnr ai isp outbuf is null\n");
-		return NULL;
-	}
-
 	++ctx->isp_pipe_cfg[raw_num].raw_ai_isp_frm_cnt;
 
-	//will modify by mw，0 src for ai isp, 1 dst for ai isp
+	//for mars uses input buffer directly, no output buffer required
 	ai_isp_cfg_info[raw_num].ai_bnr_addr_pool[0] = in_b->addr;
-	ai_isp_cfg_info[raw_num].ai_bnr_addr_pool[1] = out_buf->addr;
 
-	vi_pr(VI_DBG, "raw_%d ai_isp outbuf addr(0x%llx) inbuf addr(0x%llx)\n",
-		raw_num, out_buf->addr, in_b->addr);
+	vi_pr(VI_DBG, "raw_%d ai_isp inbuf addr(0x%llx)\n", raw_num, in_b->addr);
 
 	atomic_set(&vdev->ai_isp_int_flag[raw_num], 1);
 
@@ -7691,17 +7642,10 @@ static struct isp_buffer *bnr_ai_isp_launch_tpu(struct cvi_vi_dev *vdev,
 	if (!ret) {
 		vi_pr(VI_WARN, "raw_%d wait process timeout(%d ms) at frame(%d)\n",
 			raw_num, timeout, ctx->isp_pipe_cfg[raw_num].raw_ai_isp_frm_cnt);
-		isp_buf_queue(&bnr_ai_isp_out_q[raw_num][chn_num], out_buf);
 		return NULL;
 	}
 
-	if (in_b->addr == ai_isp_cfg_info[raw_num].ai_bnr_addr_pool[1]) {
-		vi_pr(VI_DBG, "raw_%d ai_isp outbuf is same as inbuf\n", raw_num);
-		isp_buf_queue(&bnr_ai_isp_out_q[raw_num][chn_num], out_buf);
-		return NULL;
-	}
-
-	return out_buf;
+	return NULL;
 }
 
 static void ai_isp_handle_process(
@@ -7726,7 +7670,7 @@ static void ai_isp_handle_process(
 
 		in_buf = isp_buf_remove(tpu_w_q);
 		if (!in_buf) {
-			vi_pr(VI_ERR, "tpu_w_q_%d_%d is NULL!\n", raw_num, chn_num);
+			vi_pr(VI_INFO, "tpu_w_q_%d_%d is NULL!\n", raw_num, chn_num);
 			break;
 		}
 
@@ -7764,7 +7708,6 @@ static int _vi_run_tpu_thread(void *arg)
 
 		if (vdev->vi_th[th_id].flag != 0) {
 			raw_num = vdev->vi_th[th_id].flag - 1;
-			vdev->vi_th[th_id].flag = 0;
 		}
 
 		if (kthread_should_stop()) {
@@ -7774,6 +7717,8 @@ static int _vi_run_tpu_thread(void *arg)
 		}
 
 		ai_isp_handle_process(vdev, raw_num);
+
+		vdev->vi_th[th_id].flag = 0;
 	}
 
 	return 0;
@@ -7859,6 +7804,9 @@ static inline void _vi_wake_up_vblank_th(struct cvi_vi_dev *vdev, const enum cvi
 
 static inline void _vi_wake_up_tpu_th(struct cvi_vi_dev *vdev, const enum cvi_isp_raw raw_num)
 {
+	if (vdev->vi_th[E_VI_TH_RUN_TPU].flag)
+		return;
+
 	vdev->vi_th[E_VI_TH_RUN_TPU].flag = raw_num + 1;
 	wake_up(&vdev->vi_th[E_VI_TH_RUN_TPU].wq);
 }
@@ -7888,6 +7836,10 @@ static void _isp_sof_handler(struct cvi_vi_dev *vdev, const enum cvi_isp_raw raw
 
 	if (atomic_read(&vdev->isp_raw_dump_en[raw_num]) == 2) //raw_dump flow
 		atomic_set(&vdev->isp_raw_dump_en[raw_num], 3);
+
+	if (isp_next_buf(&bnr_ai_isp_in_q[raw_num][ISP_CHN0])) {
+		_vi_wake_up_tpu_th(vdev, raw_num);
+	}
 
 	tasklet_hi_schedule(&vdev->job_work);
 
@@ -8137,6 +8089,10 @@ static inline void _isp_pre_fe_done_handler(
 			isp_buf_queue(be_in_q, b);
 		}
 
+		//Aviod le\se drop frame on hdr mode
+		if (ctx->isp_pipe_cfg[raw_num].is_hdr_on)
+			buf_num_check(vdev, raw_num, chn_num);
+
 		vi_pr(VI_DBG, "pre_fe_%d done chn_num=%d frm_num=%d addr=0x%llx rgbmap=%llx\n",
 				cur_raw, chn_num, vdev->pre_fe_frm_num[cur_raw][chn_num], b->addr, b->rgbmap_addr);
 
@@ -8246,7 +8202,7 @@ static inline void _isp_pre_be_done_handler(
 		struct isp_buffer *b = NULL;
 		struct isp_queue *be_in_q = (chn_num == ISP_BE_CH0) ?
 						&pre_be_in_q : &pre_be_in_se_q[vdev->ctx.cam_id];
-		struct isp_queue *pre_out_q = NULL, *tpu_out_q = NULL;
+		struct isp_queue *pre_out_q = NULL;
 		enum cvi_isp_raw hw_raw = ISP_PRERAW_MAX;
 
 		if (!ctx->isp_pipe_cfg[ISP_PRERAW_A].is_offline_preraw) {
@@ -8266,6 +8222,10 @@ static inline void _isp_pre_be_done_handler(
 		++vdev->pre_be_frm_num[raw_num][chn_num];
 		type = VI_EVENT_PRE0_EOF + raw_num;
 
+		//Aviod le\se drop frame on hdr mode
+		if (ctx->isp_pipe_cfg[raw_num].is_hdr_on)
+			buf_num_check(vdev, raw_num, chn_num);
+
 		vi_pr(VI_DBG, "pre_be_%d frm_done chn_num=%d frm_num=%d\n",
 				raw_num, chn_num, vdev->pre_be_frm_num[raw_num][chn_num]);
 
@@ -8275,12 +8235,9 @@ static inline void _isp_pre_be_done_handler(
 			} else {
 				pre_out_q = (chn_num == ISP_BE_CH0) ?
 					&pre_out_queue[hw_raw] : &pre_out_se_queue[hw_raw];
-				tpu_out_q = &bnr_ai_isp_out_q[hw_raw][chn_num];
 
 				if (b->src == PRE_FE)
 					isp_buf_queue(pre_out_q, b);
-				else
-					isp_buf_queue(tpu_out_q, b);
 			}
 		}
 
@@ -8354,8 +8311,6 @@ static void _isp_postraw_done_handler(struct cvi_vi_dev *vdev)
 	if (_isp_clk_dynamic_en(vdev, false) < 0)
 		return;
 
-	++ctx->isp_pipe_cfg[raw_num].first_frm_cnt;
-
 	if (_is_fe_be_online(ctx) && !ctx->is_slice_buf_on) { //fe->be->dram->post
 		struct isp_buffer *ispb, *ispb_se;
 
@@ -8390,7 +8345,6 @@ static void _isp_postraw_done_handler(struct cvi_vi_dev *vdev)
 		if (ctx->isp_pipe_cfg[raw_num].is_yuv_bypass_path) {
 			struct isp_buffer *b = NULL;
 			struct isp_queue *be_in_q = &pre_be_in_q;
-			struct isp_queue *pre_out_q = NULL;
 			u8 chn_num = 0;
 
 			b = isp_buf_remove(be_in_q);
@@ -8404,8 +8358,7 @@ static void _isp_postraw_done_handler(struct cvi_vi_dev *vdev)
 			}
 			chn_num = b->chn_num;
 
-			pre_out_q = &pre_out_queue[chn_num];
-			isp_buf_queue(pre_out_q, b);
+			isp_buf_queue(&pre_out_queue[chn_num], b);
 		}
 	} else if (_is_all_online(ctx) ||
 		(_is_fe_be_online(ctx) && ctx->is_slice_buf_on)) {
@@ -8421,6 +8374,7 @@ static void _isp_postraw_done_handler(struct cvi_vi_dev *vdev)
 	if (_is_be_post_online(ctx) && ctx->isp_pipe_cfg[raw_num].is_yuv_bypass_path)
 		atomic_set(&vdev->pre_be_state[ISP_BE_CH0], ISP_PRE_BE_IDLE);
 
+	++ctx->isp_pipe_cfg[raw_num].first_frm_cnt;
 	++vdev->postraw_frame_number[raw_num];
 
 	vi_pr(VI_DBG, "Postraw_%d frm_done frm_num=%d\n", raw_num, vdev->postraw_frame_number[raw_num]);

@@ -1297,7 +1297,7 @@ int vo_create_thread(struct cvi_vo_dev *vdev, enum E_VO_TH th_id)
 	if (vdev->vo_th[th_id].w_thread == NULL) {
 		switch (th_id) {
 		case E_VO_TH_DISP:
-			memcpy(vdev->vo_th[th_id].th_name, "cvitask_disp", sizeof(vdev->vo_th[th_id].th_name));
+			memcpy(vdev->vo_th[th_id].th_name, "cvitask_disp", strlen("cvitask_disp") + 1);
 			vdev->vo_th[th_id].th_handler = _vo_disp_thread;
 			break;
 
@@ -2356,6 +2356,9 @@ void vo_irq_handler(struct cvi_vo_dev *vdev, union sclr_intr intr_status)
 		bool axi_idle = sclr_disp_get_axi_status() & 0x01;
 
 		++vdev->frame_number;
+
+		if (!gVoCtx->is_layer_enable[0])
+			return;
 
 		if (status.b.bw_fail)
 			CVI_TRACE_VO(CVI_DBG_ERR, " disp bw failed at frame#%d\n", vdev->frame_number);

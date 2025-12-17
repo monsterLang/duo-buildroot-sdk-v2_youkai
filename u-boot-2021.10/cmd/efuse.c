@@ -6,9 +6,9 @@
 #include <stdarg.h>
 #include <malloc.h>
 #include <mmio.h>
-#include <cvi_efuse.h>
-
-#ifdef __riscv
+#include <cvitek/cvi_efuse.h>
+#include <asm/system.h>
+#include <linux/arm-smccc.h>
 
 #define EFUSE_DEBUG 0
 
@@ -74,6 +74,7 @@ static int hex2bytes(const char *hex, unsigned char *buf, int buf_size)
 // EFUSE implementation
 // ===========================================================================
 #define EFUSE_SHADOW_REG (EFUSE_BASE + 0x100)
+#define SEC_EFUSE_SHADOW_REG (0x020C0100)
 #define EFUSE_SIZE 0x100
 
 #define EFUSE_MODE (EFUSE_BASE + 0x0)
@@ -90,6 +91,10 @@ static int hex2bytes(const char *hex, unsigned char *buf, int buf_size)
 #define EFUSE_BIT_CMD BIT(4)
 #define EFUSE_BIT_BUSY BIT(0)
 #define EFUSE_CMD_REFRESH (0x30)
+
+#define OPTEE_SMC_CALL_CV_EFUSE_READ 0x03000006
+#define OPTEE_SMC_CALL_CV_EFUSE_WRITE 0x03000007
+
 
 enum EFUSE_READ_TYPE { EFUSE_AREAD, EFUSE_MREAD };
 
@@ -219,7 +224,11 @@ int64_t cvi_efuse_read_from_shadow(uint32_t addr)
 	if (addr % 4 != 0)
 		return -EFAULT;
 
+#ifdef __riscv
+	return mmio_read_32(SEC_EFUSE_SHADOW_REG + addr);
+#else
 	return mmio_read_32(EFUSE_SHADOW_REG + addr);
+#endif
 }
 
 int cvi_efuse_write(uint32_t addr, uint32_t value)
@@ -245,13 +254,6 @@ int cvi_efuse_write(uint32_t addr, uint32_t value)
 // ===========================================================================
 // EFUSE API
 // ===========================================================================
-enum CVI_EFUSE_LOCK_WRITE_E {
-	CVI_EFUSE_LOCK_WRITE_HASH0_PUBLIC = CVI_EFUSE_OTHERS + 1,
-	CVI_EFUSE_LOCK_WRITE_LOADER_EK,
-	CVI_EFUSE_LOCK_WRITE_DEVICE_EK,
-	CVI_EFUSE_LOCK_WRITE_LAST
-};
-
 static struct _CVI_EFUSE_AREA_S {
 	CVI_U32 addr;
 	CVI_U32 size;
@@ -275,7 +277,21 @@ static struct _CVI_EFUSE_USER_S {
 	{ 0x40, 4 }, { 0x48, 4 }, { 0x50, 4 }, { 0x58, 4 }, { 0x60, 4 },
 	{ 0x68, 4 }, { 0x70, 4 }, { 0x78, 4 }, { 0x80, 4 }, { 0x88, 4 },
 };
-
+static const char *const efuse_index[] = {
+	[CVI_EFUSE_AREA_USER] = "USER",
+	[CVI_EFUSE_AREA_DEVICE_ID] = "DEVICE_ID",
+	[CVI_EFUSE_AREA_HASH0_PUBLIC] = "HASH0_PUBLIC",
+	[CVI_EFUSE_AREA_LOADER_EK] = "LOADER_EK",
+	[CVI_EFUSE_AREA_DEVICE_EK] = "DEVICE_EK",
+	[CVI_EFUSE_LOCK_HASH0_PUBLIC] = "LOCK_HASH0_PUBLIC",
+	[CVI_EFUSE_LOCK_LOADER_EK] = "LOCK_LOADER_EK",
+	[CVI_EFUSE_LOCK_DEVICE_EK] = "LOCK_DEVICE_EK",
+	[CVI_EFUSE_LOCK_WRITE_HASH0_PUBLIC] = "LOCK_WRITE_HASH0_PUBLIC",
+	[CVI_EFUSE_LOCK_WRITE_LOADER_EK] = "LOCK_WRITE_LOADER_EK",
+	[CVI_EFUSE_LOCK_WRITE_DEVICE_EK] = "LOCK_WRITE_DEVICE_EK",
+	[CVI_EFUSE_SECUREBOOT] = "SECUREBOOT",
+	[CVI_EFUSE_FASTBOOT] = "FASTBOOT",
+};
 #define CVI_EFUSE_TOTAL_SIZE 0x100
 
 #define CVI_EFUSE_LOCK_ADDR 0xF8
@@ -288,6 +304,8 @@ static struct _CVI_EFUSE_USER_S {
 #define CVI_EFUSE_BOOT_LOADER_ENCRYPTION		6
 #define CVI_EFUSE_LDR_KEY_SELECTION_SHIFT		23
 
+#define CVI_EFUSE_SW_INFO						0x2C
+#define CVI_EFUSE_CUSTOMER_ADDR					0x4
 
 CVI_S32 CVI_EFUSE_GetSize(enum CVI_EFUSE_AREA_E area, CVI_U32 *size)
 {
@@ -302,6 +320,7 @@ CVI_S32 CVI_EFUSE_GetSize(enum CVI_EFUSE_AREA_E area, CVI_U32 *size)
 	return 0;
 }
 
+#ifdef __riscv
 CVI_S32 _CVI_EFUSE_Read(CVI_U32 addr, void *buf, CVI_U32 buf_size)
 {
 	int64_t ret = -1;
@@ -326,7 +345,42 @@ CVI_S32 _CVI_EFUSE_Read(CVI_U32 addr, void *buf, CVI_U32 buf_size)
 
 	return 0;
 }
+#else
+static CVI_S32 _CVI_EFUSE_Read(CVI_U32 addr, void *buf, CVI_U32 buf_size)
+{
+	CVI_S32 ret = -1;
+	struct arm_smccc_res res = { 0 };
+	struct arm_smccc_quirk quirk = { 0 };
 
+	_cc_trace("addr=0x%02x\n", addr);
+
+	if (!buf)
+		return CVI_ERR_EFUSE_INVALID_PARA;
+
+	__asm_flush_dcache_all();
+	__arm_smccc_smc(OPTEE_SMC_CALL_CV_EFUSE_READ, addr, buf_size, (unsigned long)buf, 0, 0, 0, 0, &res, &quirk);
+
+	ret = res.a0;
+
+	return ret;
+}
+#endif
+CVI_U32 CVI_EFUSE_Read_Word(CVI_U32 addr)
+{
+	CVI_U32 addr_row;
+	CVI_U32 val = 0;
+
+	if (addr >= EFUSE_SIZE)
+		return -EFAULT;
+
+	addr_row = addr / 4;
+
+	val |= cvi_efuse_read_from_phy((addr_row << 1) | 0, EFUSE_AREAD);
+
+	val |= cvi_efuse_read_from_phy((addr_row << 1) | 1, EFUSE_AREAD);
+
+	return val;
+}
 static CVI_S32 _CVI_EFUSE_Write(CVI_U32 addr, const void *buf, CVI_U32 buf_size)
 {
 	_cc_trace("addr=0x%02x\n", addr);
@@ -426,18 +480,133 @@ CVI_S32 CVI_EFUSE_Write(enum CVI_EFUSE_AREA_E area, const CVI_U8 *buf, CVI_U32 b
 	return CVI_SUCCESS;
 }
 
-CVI_S32 CVI_EFUSE_EnableSecureBoot(uint32_t sel)
+CVI_S32 CVI_EFUSE_EnableFastBoot(void)
+{
+	CVI_U32 value = 0, data;
+	CVI_S32 ret = 0;
+	CVI_U32 chip = 0;
+
+	if (CVI_EFUSE_IsFastBootEnabled() == CVI_SUCCESS) {
+		printf("Fast Boot is already enabled.\n");
+		return CVI_SUCCESS;
+	}
+
+	chip = mmio_read_32(0x0300008c);
+
+	ret = _CVI_EFUSE_Read(CVI_EFUSE_SW_INFO, &value, sizeof(value));
+	_cc_trace("ret=%d value=%u\n", ret, value);
+	if (ret < 0)
+		return CVI_FAILURE;
+
+	data = (value & (0x3 << 22)) >> 22;
+	if (data > 0x1)
+		return CVI_FAILURE;
+
+	data = (value & (0x3 << 24)) >> 24;
+	if (data > 0x1)
+		return CVI_FAILURE;
+
+	data = (value & (0x3 << 26)) >> 26;
+	if (data > 0x1)
+		return CVI_FAILURE;
+
+	ret = _CVI_EFUSE_Read(CVI_EFUSE_CUSTOMER_ADDR, &value, sizeof(value));
+	_cc_trace("ret=%d value=%u\n", ret, value);
+	if (ret < 0)
+		return ret;
+
+	if ((chip & 0xFFF0F) == 0x1810C && ((chip >> 4) & 0xF) <= 3) { // 181XC (X <= 3)
+		value |= 0x1E1E64; // CV181X-AUX0
+		if (value != 0x1E1E64) {
+			_cc_trace("CUSTOMER value=%u\n", value);
+			return CVI_FAILURE;
+		}
+	} else if (((chip & 0xFFF0F) == 0x1800C || (chip & 0xFFF0F) == 0x1800B)
+					&& ((chip >> 4) & 0xF) <= 3) { // CV180X (X <= 3)
+		value |= 0x1E1564; // CV180X-AUX0
+		if (value != 0x1E1564) {
+			_cc_trace("CUSTOMER value=%u\n", value);
+			return CVI_FAILURE;
+		}
+	} else {
+		value |= 0x1; // USB_ID
+		if (value != 0x1) {
+			_cc_trace("CUSTOMER value=%u\n", value);
+			return CVI_FAILURE;
+		}
+	}
+
+	ret = _CVI_EFUSE_Write(CVI_EFUSE_CUSTOMER_ADDR, &value, sizeof(value));
+	if (ret < 0)
+		return ret;
+
+	// set sd dl button
+	value = (0x1 << 22);
+	value |= (0x1 << 24);
+	value |= (0x1 << 26);
+
+	return _CVI_EFUSE_Write(CVI_EFUSE_SW_INFO, &value, sizeof(value));
+}
+
+CVI_S32 CVI_EFUSE_IsFastBootEnabled(void)
+{
+	CVI_U32 value = 0;
+	CVI_S32 ret = 0;
+	CVI_U32 chip = 0;
+
+	chip = mmio_read_32(0x0300008c);
+
+	ret = _CVI_EFUSE_Read(CVI_EFUSE_SW_INFO, &value, sizeof(value));
+	_cc_trace("ret=%d value=%u\n", ret, value);
+	if (ret < 0)
+		return ret;
+
+	if (((value & (0x3 << 22)) != (0x1 << 22))
+		&& ((value & (0x3 << 24)) != (0x1 << 24))
+		&& ((value & (0x3 << 26)) != (0x1 << 26))) {
+		_cc_trace("sw_info isn't fastboot config\n");
+		return CVI_FAILURE;
+	}
+
+	ret = _CVI_EFUSE_Read(CVI_EFUSE_CUSTOMER_ADDR, &value, sizeof(value));
+	_cc_trace("ret=%d value=%u\n", ret, value);
+	if (ret < 0)
+		return ret;
+
+	if ((chip & 0xFFF0F) == 0x1810C && ((chip >> 4) & 0xF) <= 3) { // 181XC (X <= 3)
+		if (value == 0x1E1E64)
+			return CVI_SUCCESS; // CV181X-AUX0
+		else
+			return CVI_FAILURE;
+	} else if (((chip & 0xFFF0F) == 0x1800C || (chip & 0xFFF0F) == 0x1800B)
+					&& ((chip >> 4) & 0xF) <= 3) { // CV180X (X <= 3)
+		if (value == 0x1E1564)
+			return CVI_SUCCESS; // CV180X-AUX0
+		else
+			return CVI_FAILURE;
+	} else {
+		if (value == 0x1)
+			return CVI_SUCCESS; // USB_ID
+		else
+			return CVI_FAILURE;
+	}
+
+	return CVI_FAILURE;
+}
+
+CVI_S32 CVI_EFUSE_EnableSecureBoot(enum CVI_EFUSE_SECUREBOOT_E sel)
 {
 	CVI_U32 value = 0;
 
 	value |= 0x3 << CVI_EFUSE_TEE_SCS_ENABLE_SHIFT;
 	value |= 0x4 << CVI_EFUSE_ROOT_PUBLIC_KEY_SELECTION_SHIFT;
 
-	if (sel != 1) {
+#if IS_ENABLED(CONFIG_TARGET_CVITEK_CV181X)
+	if (CVI_EFUSE_SECUREBOOT_SIGN_ENCRYPT == sel) {
 		value |= 0x3 << CVI_EFUSE_BOOT_LOADER_ENCRYPTION;
 		value |= 0x4 << CVI_EFUSE_LDR_KEY_SELECTION_SHIFT;
 	}
-
+#endif
 	return _CVI_EFUSE_Write(CVI_EFUSE_SECURE_CONF_ADDR, &value, sizeof(value));
 }
 
@@ -451,49 +620,8 @@ CVI_S32 CVI_EFUSE_IsSecureBootEnabled(void)
 	if (ret < 0)
 		return ret;
 
-	ret = (value & (0x3 << CVI_EFUSE_TEE_SCS_ENABLE_SHIFT)) >> CVI_EFUSE_TEE_SCS_ENABLE_SHIFT;
-	if (ret == 0) {
-		printf("Secure Boot is disable\n");
-		return 0;
-	}
-
-	ret = (value & (0x7 << CVI_EFUSE_ROOT_PUBLIC_KEY_SELECTION_SHIFT)) >> CVI_EFUSE_ROOT_PUBLIC_KEY_SELECTION_SHIFT;
-	switch (ret) {
-	case 0:
-		printf("Secure Boot sign is enable, verity with rot_pk_a_hash\n");
-		break;
-	case 1:
-		printf("Secure Boot sign is enable, verity with rot_pk_b_hash\n");
-		break;
-	case 2:
-		printf("Secure Boot sign is enable, verity with rot_pk_c_hash\n");
-		break;
-	default:
-		printf("Secure Boot sign is enable, verity with efuse KPUB HASH\n");
-		break;
-	}
-
-	ret = (value & (0x3 << CVI_EFUSE_BOOT_LOADER_ENCRYPTION)) >> CVI_EFUSE_BOOT_LOADER_ENCRYPTION;
-	if (ret == 0)
-		return 0;
-
-	ret = (value & (0x7 << CVI_EFUSE_LDR_KEY_SELECTION_SHIFT)) >> CVI_EFUSE_LDR_KEY_SELECTION_SHIFT;
-	switch (ret) {
-	case 0:
-		printf("Secure Boot encryption is enable, decrypt with ldr_ek_a\n");
-		break;
-	case 1:
-		printf("Secure Boot encryption is enable, decrypt with ldr_ek_b\n");
-		break;
-	case 2:
-		printf("Secure Boot encryption is enable, decrypt with ldr_ek_c\n");
-		break;
-	default:
-		printf("Secure Boot encryption is enable, decrypt with efuse LDR DES KEY\n");
-		break;
-	}
-
-	return 0;
+	value &= 0x3 << CVI_EFUSE_SCS_ENABLE_SHIFT;
+	return !!value;
 }
 
 CVI_S32 CVI_EFUSE_Lock(enum CVI_EFUSE_LOCK_E lock)
@@ -505,6 +633,9 @@ CVI_S32 CVI_EFUSE_Lock(enum CVI_EFUSE_LOCK_E lock)
 		_cc_error("lock (%d) is not found\n", lock);
 		return CVI_ERR_EFUSE_INVALID_AREA;
 	}
+#ifdef __riscv
+	mmio_write_32(EFUSE_BASE+0x24,0xe9546b8d);
+#endif
 
 	value = 0x3 << cvi_efuse_lock[lock].wlock_shift;
 	ret = _CVI_EFUSE_Write(CVI_EFUSE_LOCK_ADDR, &value, sizeof(value));
@@ -515,7 +646,9 @@ CVI_S32 CVI_EFUSE_Lock(enum CVI_EFUSE_LOCK_E lock)
 		value = 0x3 << cvi_efuse_lock[lock].rlock_shift;
 		ret = _CVI_EFUSE_Write(CVI_EFUSE_LOCK_ADDR, &value, sizeof(value));
 	}
-
+#ifdef __riscv
+	mmio_write_32(EFUSE_BASE+0x24,0x0);
+#endif
 	return ret;
 }
 
@@ -523,7 +656,7 @@ CVI_S32 CVI_EFUSE_IsLocked(enum CVI_EFUSE_LOCK_E lock)
 {
 	CVI_S32 ret = 0;
 	CVI_U32 value = 0;
-
+	CVI_U32 tmp = 0;
 	if (lock >= ARRAY_SIZE(cvi_efuse_lock)) {
 		_cc_error("lock (%d) is not found\n", lock);
 		return CVI_ERR_EFUSE_INVALID_AREA;
@@ -533,9 +666,14 @@ CVI_S32 CVI_EFUSE_IsLocked(enum CVI_EFUSE_LOCK_E lock)
 	_cc_trace("ret=%d value=%u\n", ret, value);
 	if (ret < 0)
 		return ret;
-
-	value &= 0x3 << cvi_efuse_lock[lock].wlock_shift;
-	return !!value;
+	tmp = value&(0x3 << cvi_efuse_lock[lock].wlock_shift);
+	ret = tmp;
+	printf("%s write is %s locked\n", efuse_index[lock], !!tmp ? "" : "not");
+	if(cvi_efuse_lock[lock].rlock_shift >= 0){
+		tmp = value&(0x3 << cvi_efuse_lock[lock].rlock_shift);
+		printf("%s read is %s locked\n", efuse_index[lock], !!tmp ? "" : "not");
+	}
+	return !!(ret|tmp);
 }
 
 CVI_S32 CVI_EFUSE_LockWrite(enum CVI_EFUSE_LOCK_E lock)
@@ -572,20 +710,7 @@ CVI_S32 CVI_EFUSE_IsWriteLocked(enum CVI_EFUSE_LOCK_E lock)
 	return !!value;
 }
 
-static const char *const efuse_index[] = {
-	[CVI_EFUSE_AREA_USER] = "USER",
-	[CVI_EFUSE_AREA_DEVICE_ID] = "DEVICE_ID",
-	[CVI_EFUSE_AREA_HASH0_PUBLIC] = "HASH0_PUBLIC",
-	[CVI_EFUSE_AREA_LOADER_EK] = "LOADER_EK",
-	[CVI_EFUSE_AREA_DEVICE_EK] = "DEVICE_EK",
-	[CVI_EFUSE_LOCK_HASH0_PUBLIC] = "LOCK_HASH0_PUBLIC",
-	[CVI_EFUSE_LOCK_LOADER_EK] = "LOCK_LOADER_EK",
-	[CVI_EFUSE_LOCK_DEVICE_EK] = "LOCK_DEVICE_EK",
-	[CVI_EFUSE_LOCK_WRITE_HASH0_PUBLIC] = "LOCK_WRITE_HASH0_PUBLIC",
-	[CVI_EFUSE_LOCK_WRITE_LOADER_EK] = "LOCK_WRITE_LOADER_EK",
-	[CVI_EFUSE_LOCK_WRITE_DEVICE_EK] = "LOCK_WRITE_DEVICE_EK",
-	[CVI_EFUSE_SECUREBOOT] = "SECUREBOOT",
-};
+
 
 static int find_efuse_by_name(const char *name)
 {
@@ -636,6 +761,11 @@ static int do_efuser(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv
 		return 0;
 	} else if (idx == CVI_EFUSE_SECUREBOOT) {
 		ret = CVI_EFUSE_IsSecureBootEnabled();
+		printf("Secure Boot is %s\n", ret ? "enabled" : "disabled");
+		return 0;
+	} else if (idx == CVI_EFUSE_FASTBOOT) {
+		ret = CVI_EFUSE_IsFastBootEnabled();
+		printf("Fast Boot is %s\n", (ret == CVI_SUCCESS)? "enabled" : "disabled");
 		return 0;
 	} else if (idx < CVI_EFUSE_LOCK_WRITE_LAST) {
 		ret = CVI_EFUSE_IsWriteLocked(idx);
@@ -706,6 +836,10 @@ static int do_efusew(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv
 		ret = CVI_EFUSE_EnableSecureBoot(sel);
 		printf("Enabled Secure Boot is %s\n", ret >= 0 ? "success" : "failed");
 		return 0;
+	} else if (idx == CVI_EFUSE_FASTBOOT) {
+		ret = CVI_EFUSE_EnableFastBoot();
+		printf("Enabled Fast Boot is %s\n", ret >= 0 ? "success" : "failed");
+		return 0;
 	} else if (idx < CVI_EFUSE_LOCK_WRITE_LAST) {
 		if (CVI_EFUSE_LockWrite(idx) < 0) {
 			printf("Failed to lock write %s\n", efuse_index[idx]);
@@ -717,6 +851,21 @@ static int do_efusew(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv
 	}
 
 	return CMD_RET_FAILURE;
+}
+static int do_efuser_word(struct cmd_tbl *cmdtp, int flag, int argc,
+			  char *const argv[])
+{
+	uint32_t addr;
+
+	addr = simple_strtoul(argv[1], NULL, 0);
+
+	if (addr > 63 || argc != 2)
+		return CMD_RET_USAGE;
+	uint32_t val = CVI_EFUSE_Read_Word(addr << 2);
+
+	printf("addr address 0x%04x= 0x%08x\n", addr << 2, val);
+
+	return 0;
 }
 
 static int do_efusew_word(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
@@ -763,12 +912,14 @@ U_BOOT_CMD(efusew, 9, 1, do_efusew, "Write efuse",
 	   "[args..]\n"
 	   "    - args ...");
 
+U_BOOT_CMD(efuser_word, 9, 1, do_efuser_word, "Read word to efuse",
+	   "efusew_word addr value\n"
+	   "    - args address row;the address range from 0~63");
+
 U_BOOT_CMD(efusew_word, 9, 1, do_efusew_word, "Write word to efuse",
 	   "efusew_word addr value\n"
 	   "    - args ...");
 
-U_BOOT_CMD(efuser_dump, 9, 1, do_efuser_dump, "Read/Dump efuse",
+U_BOOT_CMD(efuser_dump, 9, 1, do_efuser_dump, "Read/Dump efuse except secure area",
 	   "do_efuser_dump\n"
 	   "    - args ...");
-
-#endif

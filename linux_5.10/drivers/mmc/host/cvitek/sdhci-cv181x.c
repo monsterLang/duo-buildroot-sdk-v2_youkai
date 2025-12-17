@@ -743,6 +743,7 @@ retry_tuning:
 static void sdhci_cv181x_emmc_reset(struct sdhci_host *host, u8 mask)
 {
 	u16 ctrl_2;
+	u32 phy_rx_tx_dly_reg = 0;
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_cvi_host *cvi_host = sdhci_pltfm_priv(pltfm_host);
 
@@ -779,14 +780,20 @@ static void sdhci_cv181x_emmc_reset(struct sdhci_host *host, u8 mask)
 		sdhci_writel(host,
 			sdhci_readl(host, CVI_CV181X_SDHCI_PHY_CONFIG) | BIT(0),
 			CVI_CV181X_SDHCI_PHY_CONFIG);
-		//reg_0x240[25:24] = 1 reg_0x240[22:16] = 0 reg_0x240[9:8] = 1 reg_0x240[6:0] = 0
-		sdhci_writel(host, 0x1000100, CVI_CV181X_SDHCI_PHY_TX_RX_DLY);
+		//reg_0x240[25:24] = 00'b/01'b; reg_0x240[22:16] = 0
+		//reg_0x240[9:8] = 00'b/01'b reg_0x240[6:0] = 0
+		if (!(host->quirks2 & SDHCI_QUIRK2_RX_PHASE_FORWARD))
+			phy_rx_tx_dly_reg |= BIT(24);
+		if (!(host->quirks2 & SDHCI_QUIRK2_TX_PHASE_FORWARD))
+			phy_rx_tx_dly_reg |= BIT(8);
+		sdhci_writel(host, phy_rx_tx_dly_reg, CVI_CV181X_SDHCI_PHY_TX_RX_DLY);
 	}
 }
 
 static void sdhci_cv181x_sd_reset(struct sdhci_host *host, u8 mask)
 {
 	u16 ctrl_2;
+	u32 phy_rx_tx_dly_reg = 0;
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_cvi_host *cvi_host = sdhci_pltfm_priv(pltfm_host);
 
@@ -818,14 +825,20 @@ static void sdhci_cv181x_sd_reset(struct sdhci_host *host, u8 mask)
 		sdhci_writel(host,
 			sdhci_readl(host, CVI_CV181X_SDHCI_PHY_CONFIG) | BIT(0),
 			CVI_CV181X_SDHCI_PHY_CONFIG);
-		//reg_0x240[25:24] = 1 reg_0x240[22:16] = 0 reg_0x240[9:8] = 1 reg_0x240[6:0] = 0
-		sdhci_writel(host, 0x1000100, CVI_CV181X_SDHCI_PHY_TX_RX_DLY);
+		//reg_0x240[25:24] = 00'b/01'b; reg_0x240[22:16] = 0
+		//reg_0x240[9:8] = 00'b/01'b reg_0x240[6:0] = 0
+		if (!(host->quirks2 & SDHCI_QUIRK2_RX_PHASE_FORWARD))
+			phy_rx_tx_dly_reg |= BIT(24);
+		if (!(host->quirks2 & SDHCI_QUIRK2_TX_PHASE_FORWARD))
+			phy_rx_tx_dly_reg |= BIT(8);
+		sdhci_writel(host, phy_rx_tx_dly_reg, CVI_CV181X_SDHCI_PHY_TX_RX_DLY);
 	}
 }
 
 static void sdhci_cv181x_sdio_reset(struct sdhci_host *host, u8 mask)
 {
 	u16 ctrl_2;
+	u32 phy_rx_tx_dly_reg = 0;
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_cvi_host *cvi_host = sdhci_pltfm_priv(pltfm_host);
 
@@ -865,8 +878,13 @@ static void sdhci_cv181x_sdio_reset(struct sdhci_host *host, u8 mask)
 		sdhci_writel(host,
 			sdhci_readl(host, CVI_CV181X_SDHCI_PHY_CONFIG) | BIT(0),
 			CVI_CV181X_SDHCI_PHY_CONFIG);
-		//reg_0x240[25:24] = 1 reg_0x240[22:16] = 0 reg_0x240[9:8] = 1 reg_0x240[6:0] = 0
-		sdhci_writel(host, 0x1000100, CVI_CV181X_SDHCI_PHY_TX_RX_DLY);
+		//reg_0x240[25:24] = 00'b/01'b; reg_0x240[22:16] = 0
+		//reg_0x240[9:8] = 00'b/01'b reg_0x240[6:0] = 0
+		if (!(host->quirks2 & SDHCI_QUIRK2_RX_PHASE_FORWARD))
+			phy_rx_tx_dly_reg |= BIT(24);
+		if (!(host->quirks2 & SDHCI_QUIRK2_TX_PHASE_FORWARD))
+			phy_rx_tx_dly_reg |= BIT(8);
+		sdhci_writel(host, phy_rx_tx_dly_reg, CVI_CV181X_SDHCI_PHY_TX_RX_DLY);
 	}
 }
 
@@ -1317,10 +1335,10 @@ static int sdhci_cvi_probe(struct platform_device *pdev)
 	struct sdhci_cvi_host *cvi_host;
 	const struct of_device_id *match;
 	const struct sdhci_pltfm_data *pdata;
-	struct clk *clk_sd;
 	int ret;
 	int gpio_cd = -EINVAL;
 	u32 extra;
+	char *clkname = NULL;
 
 	pr_info(DRIVER_NAME ":%s\n", __func__);
 
@@ -1349,6 +1367,27 @@ static int sdhci_cvi_probe(struct platform_device *pdev)
 	ret = mmc_of_parse(host->mmc);
 	if (ret)
 		goto pltfm_free;
+
+	if (!strcmp(match->compatible, "cvitek,cv181x-emmc"))
+		clkname = "clk_emmc";
+	else if (!strcmp(match->compatible, "cvitek,cv181x-sd"))
+		clkname = "clk_sd";
+	else if (!strcmp(match->compatible, "cvitek,cv181x-sdio"))
+		clkname = "clk_wifisd";
+	else
+		pr_warn("can't not find clkname %s with compatible %s\n", clkname, match->compatible);
+
+	if (clkname) {
+		cvi_host->clk_sdhci = devm_clk_get(&pdev->dev, clkname);
+		if (IS_ERR(cvi_host->clk_sdhci)) {
+			pr_err("failed to retrieve %s, ret %d\n", clkname, PTR_ERR(cvi_host->clk_sdhci));
+			cvi_host->clk_sdhci = NULL;
+		}
+
+		if (clk_get_rate(cvi_host->clk_sdhci) != host->mmc->f_src)
+			clk_set_rate(cvi_host->clk_sdhci, host->mmc->f_src);
+
+	}
 
 	sdhci_get_of_property(pdev);
 

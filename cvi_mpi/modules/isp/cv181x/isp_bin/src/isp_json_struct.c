@@ -3187,6 +3187,7 @@ void TEAISP_BNR_ATTR_S_JSON(int r_w_flag, JSON *j, char *key, TEAISP_BNR_ATTR_S 
 	JSON(r_w_flag, CVI_BOOL, enable);
 	JSON(r_w_flag, ISP_OP_TYPE_E, enOpType);
 	JSON(r_w_flag, CVI_U8, UpdateInterval);
+	JSON(r_w_flag, CVI_S32, offsetISO);
 	JSON(r_w_flag, TEAISP_BNR_MANUAL_ATTR_S, stManual);
 	JSON(r_w_flag, TEAISP_BNR_AUTO_ATTR_S, stAuto);
 
@@ -4170,10 +4171,10 @@ static void ISP_FOCUS_MANUAL_ATTR_S_JSON(int r_w_flag, JSON *j, char *key, ISP_F
 {
 	JSON_START(r_w_flag);
 
-	JSON(r_w_flag, AF_MANUAL_TYPE, enFocusOpType);
-	JSON(r_w_flag, AF_DIRECTION, enFocusDir);
-	JSON(r_w_flag, CVI_U16, u16FocusStep);
-	JSON(r_w_flag, CVI_U16, u16FocusPos);
+	JSON(r_w_flag, AF_MANUAL_TYPE, enOpType);
+	JSON(r_w_flag, AF_DIRECTION, enManualDir);
+	JSON(r_w_flag, CVI_U16, u16ManualStep);
+	JSON(r_w_flag, CVI_U16, u16ManualPos);
 
 	JSON_END(r_w_flag);
 }

@@ -33,6 +33,7 @@ config CROSS_COMPILE_KERNEL
 	string "Cross-compiler tool prefix for kernel"
 	default "aarch64-linux-gnu-" if TOOLCHAIN_GLIBC_ARM64
 	default "arm-linux-gnueabihf-" if TOOLCHAIN_GLIBC_ARM
+	default "arm-none-linux-musleabihf-" if TOOLCHAIN_MUSL_ARM
 	default "riscv64-unknown-linux-gnu-" if TOOLCHAIN_GLIBC_RISCV64
 	default "riscv64-unknown-linux-musl-" if TOOLCHAIN_MUSL_RISCV64
 	help
@@ -156,6 +157,11 @@ config TOOLCHAIN_UCLIBC_ARM
 	help
 	  uclibc library for arm(AARCH32).
 
+config TOOLCHAIN_MUSL_ARM
+	bool "musl library for user mode application on arm"
+	help
+	  musl library for arm(AARCH32).
+
 config TOOLCHAIN_GLIBC_RISCV64
 	bool "glibc library for user mode application on riscv64"
 	help
@@ -186,6 +192,7 @@ config SDK_VER
 	default "64bit" if TOOLCHAIN_GLIBC_ARM64
 	default "32bit" if TOOLCHAIN_GLIBC_ARM
 	default "uclibc" if TOOLCHAIN_UCLIBC_ARM
+	default "musl" if TOOLCHAIN_MUSL_ARM
 	default "glibc_riscv64" if TOOLCHAIN_GLIBC_RISCV64
 	default "musl_riscv64" if TOOLCHAIN_MUSL_RISCV64
 	help
@@ -315,6 +322,14 @@ config FSBL_SECURE_BOOT_SUPPORT
 	  "y" only build FSBL with authentication and decryption function.
 	  Still need to program eFuse to enable authentication or decryption.
 
+config FSBL_KEYS_DIR
+	string "FSBL keys directory"
+	depends on FSBL_SECURE_BOOT_SUPPORT
+	default "fsbl/plat/keys"
+	help
+	  Directory containing signing and encryption keys for FSBL FIP signing.
+	  Default is fsbl/plat/keys. Key filenames are fixed.
+
 choice
   prompt "Select Encryption Key of ATF"
   config ATF_KEY_SEL_default
@@ -367,6 +382,31 @@ config VC_CLK_OVERDRIVE
 	default n
 	help
 	  "y" Select to build fip.bin with VC clock overdrived setting
+
+menu "Burn Button Options"
+
+config ENABLE_BURN_BUTTON
+	bool "Enable burn button for update or not"
+	default n
+	depends on UBOOT_SPL_CUSTOM
+	help
+	  Enable burn button for update.
+
+config GPIO_GRP
+	int "from gpio0 to gpio4"
+	depends on ENABLE_BURN_BUTTON
+	default 1
+	help
+	  GPIO group number for button.
+
+config GPIO_PIN
+	int "GPIO pin number"
+	depends on ENABLE_BURN_BUTTON
+	default 3
+	help
+	  GPIO pin number for button.
+
+endmenu
 
 endmenu
 
@@ -533,6 +573,13 @@ config SUSPEND
 		Allow the system to enter sleep states in which main memory is
 		powered and thus its contents are preserved, such as the
 		suspend-to-RAM state (e.g. the ACPI S3 state).
+
+config KERNEL_SECURE_BOOT
+	bool "Enable kernel secure boot"
+	default n
+	help
+	  Enable kernel secure boot.
+
 endmenu
 
 menu "ROOTFS options"
@@ -563,6 +610,12 @@ config USE_4K_ERASE_SIZE_FOR_JFFS2
 	default n
 	help
 	  Enable use 4K erase size for jffs2 filesystem, it's only for nor flash
+
+config ROOTFS_RW
+	bool "Enable rootfs with rw"
+	default n
+	help
+	  Enable rootfs with rw.
 
 endmenu
 
@@ -671,6 +724,13 @@ config ALIOS_SOLUTION
 	default "" if DISABLE_ALIOS
 	help
 		Select solution to build alios.
+
+config ENABLE_RTT_UPDATE
+	bool "Enable rtt update"
+	depends on CHIP_ARCH_cv181x || CHIP_ARCH_cv180x
+	default n
+	help
+	  Enable rtt update.
 
 endmenu
 

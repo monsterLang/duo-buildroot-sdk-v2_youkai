@@ -17,6 +17,7 @@ extern "C" {
 
 typedef struct combo_dev_attr_s SNS_COMBO_DEV_ATTR_S;
 typedef struct mclk_pll_s SNS_MCLK_ATTR_S;
+typedef struct sns_i2c_info SNS_I2C_INFO;
 
 typedef struct _SNS_ATTR_S {
 	CVI_U16	u16Min;			/* Current MIN exposure of sensor */
@@ -181,6 +182,7 @@ extern ISP_SNS_OBJ_S stSnsSC200AI_Obj;
 extern ISP_SNS_OBJ_S stSnsSC200AI_1L_Obj;
 extern ISP_SNS_OBJ_S stSnsSC230AI_2L_Obj;
 extern ISP_SNS_OBJ_S stSnsSC230AI_2L_SLAVE_Obj;
+extern ISP_SNS_OBJ_S stSnsSC231HAI_Obj;
 extern ISP_SNS_OBJ_S stSnsSC301IOT_Obj;
 extern ISP_SNS_OBJ_S stSnsSC401AI_Obj;
 extern ISP_SNS_OBJ_S stSnsSC500AI_Obj;
@@ -207,6 +209,8 @@ extern ISP_SNS_OBJ_S stSnsSC223A_1L_Obj;
 extern ISP_SNS_OBJ_S stSnsSC4210_Obj;
 extern ISP_SNS_OBJ_S stSnsSC4336_Obj;
 extern ISP_SNS_OBJ_S stSnsSC4336P_Obj;
+extern ISP_SNS_OBJ_S stSnsSC4336P_1L_Obj;
+extern ISP_SNS_OBJ_S stSnsSC4336P1_1L_Obj;
 extern ISP_SNS_OBJ_S stSnsSC5336_2L_Obj;
 extern ISP_SNS_OBJ_S stSnsSC8238_Obj;
 extern ISP_SNS_OBJ_S stSnsF23_Obj;
@@ -220,6 +224,7 @@ extern ISP_SNS_OBJ_S stSnsQ03P_Obj;
 extern ISP_SNS_OBJ_S stSnsF53_Obj;
 extern ISP_SNS_OBJ_S stSnsF352_Obj;
 extern ISP_SNS_OBJ_S stSnsK306_Obj;
+extern ISP_SNS_OBJ_S stSnsH65_Obj;
 extern ISP_SNS_OBJ_S stSnsImx290_2l_Obj;
 extern ISP_SNS_OBJ_S stSnsImx307_Obj;
 extern ISP_SNS_OBJ_S stSnsImx307_Slave_Obj;

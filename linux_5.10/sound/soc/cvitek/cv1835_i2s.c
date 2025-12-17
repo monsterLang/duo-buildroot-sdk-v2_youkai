@@ -10,6 +10,7 @@
 
 
 #include <linux/clk.h>
+#include <linux/clk-provider.h>
 #include <linux/device.h>
 #include <linux/init.h>
 #include <linux/io.h>
@@ -32,6 +33,43 @@
 struct proc_dir_entry *proc_audio_dir;
 static int cvi_i2s_suspend(struct snd_soc_dai *dai);
 static int cvi_i2s_resume(struct snd_soc_dai *dai);
+
+#define CVI_PCM_ALIGN(x, a)      (((x) + ((a) - 1)) & ~((a) - 1))
+static int snd_pcm_hw_rule_period_size(struct snd_pcm_hw_params *params,
+				       struct snd_pcm_hw_rule *rule)
+{
+	struct snd_interval t;
+	int refine = 0;
+	int ret = 0;
+	struct snd_pcm_substream *substream = rule->private;
+	struct snd_interval *a = hw_param_interval_c(params, rule->deps[0]);
+
+	snd_interval_copy(&t, a);
+	if (a->max < CVI_PCM_ALIGN(a->max, 64)) {
+		refine = 1;
+		t.max = a->max - a->max % 64;
+//		t.min = a->min;
+	}
+	if (t.min < CVI_PCM_ALIGN(a->min, 64)) {
+		refine = 1;
+		t.min = CVI_PCM_ALIGN(a->min, 64);
+//        t.max = a->max;
+	}
+	if (refine) {
+		if (t.min > t.max)
+			t.max = t.min;
+		ret = snd_interval_refine(hw_param_interval(params, rule->var), &t);
+		if (ret < 0) {
+			pr_err("ret=%d rule_var:%d=%d, t info: t_max %d t_min %d,t_empty:%d\n",
+			       ret, rule->deps[0], rule->var, t.max, t.min, t.empty);
+			pr_err("a info: min:%d max:%d openmin:%d openmax:%d,a_empty:%d\n",
+			       a->min, a->max, a->openmin, a->openmax, a->empty);
+		}
+		return ret;
+	}
+
+	return 0;
+}
 
 static inline void i2s_write_reg(void __iomem *io_base, int reg, u32 val)
 {
@@ -258,6 +296,7 @@ static int cvi_i2s_startup(struct snd_pcm_substream *substream,
 {
 	struct cvi_i2s_dev *dev = snd_soc_dai_get_drvdata(cpu_dai);
 	union cvi_i2s_snd_dma_data *dma_data = NULL;
+	int ret = 0;
 
 	dev_dbg(dev->dev, "%s start *cpu_dai = %p name = %s\n", __func__, cpu_dai, cpu_dai->name);
 	if (!(dev->capability & CVI_I2S_RECORD) &&
@@ -284,6 +323,14 @@ static int cvi_i2s_startup(struct snd_pcm_substream *substream,
 	snd_soc_dai_set_dma_data(cpu_dai, substream, (void *)dma_data);
 	dev_dbg(dev->dev, "%s end cpu_dai->playback_dma_data = %p\n",
 		__func__, cpu_dai->playback_dma_data);
+	ret = snd_pcm_hw_rule_add(substream->runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES,
+				  snd_pcm_hw_rule_period_size, substream,
+				  SNDRV_PCM_HW_PARAM_PERIOD_BYTES, -1);
+	if (ret < 0)
+		return ret;
+	dev->tx_substream = substream;
+	dev_dbg(dev->dev, "%s i2s_dev:%d,substream:%p\n", __func__, dev->dev_id, dev->tx_substream);
+
 	return 0;
 }
 
@@ -515,7 +562,7 @@ static int cvi_i2s_hw_params(struct snd_pcm_substream *substream,
 	if (strcmp(substream->pcm->card->shortname, "cv182x_adc")) {
 		/* cv182x adc doesnot need to set apll*/
 		dev_info(dev->dev, "Audio system clk=%d, sample rate=%d\n", audio_clk, config->sample_rate);
-		cv1835_set_mclk(audio_clk);
+		cv1835_set_mclk(__clk_get_name(dev->clk), audio_clk);
 	}
 
 	if (!strcmp(substream->pcm->card->shortname, "cvi_adc")) {
@@ -1151,9 +1198,8 @@ static int cvi_i2s_probe(struct platform_device *pdev)
 	} else {
 		clk_id = "i2sclk";
 		ret = cvi_configure_dai_by_dt(dev, cvi_i2s_dai, res);
-		device_property_read_u32(&pdev->dev, "dev-id",
-					 &dev->dev_id);
-		dev->clk = devm_clk_get(&pdev->dev, clk_id);
+		device_property_read_u32(&pdev->dev, "dev-id", &dev->dev_id);
+		dev->clk = of_clk_get(pdev->dev.of_node, 0);
 	}
 	if (ret < 0)
 		return ret;
@@ -1166,8 +1212,7 @@ static int cvi_i2s_probe(struct platform_device *pdev)
 				return -ENODEV;
 			}
 		}
-		dev->clk = devm_clk_get(&pdev->dev, clk_id);
-
+		dev->clk = of_clk_get(pdev->dev.of_node, 0);
 		if (IS_ERR(dev->clk))
 			return PTR_ERR(dev->clk);
 
@@ -1281,6 +1326,16 @@ static int cvi_i2s_pm_suspend(struct device *dev)
 			return -ENOMEM;
 	}
 
+	i2s_dev->real_status = i2s_read_reg(i2s_dev->i2s_base, I2S_ENABLE);
+	dev_dbg(i2s_dev->dev, "suspend check devID:%d,really_state:%d,stream:%p\n",
+		i2s_dev->dev_id, i2s_dev->real_status, i2s_dev->tx_substream);
+	if (i2s_dev->real_status && i2s_dev->tx_substream) {
+		// stop dma
+		snd_dmaengine_pcm_trigger(i2s_dev->tx_substream, SNDRV_PCM_TRIGGER_STOP);
+		//stop i2s
+		i2s_stop(i2s_dev, i2s_dev->tx_substream);
+	}
+
 	i2s_dev->reg_ctx->blk_setting = i2s_read_reg(i2s_dev->i2s_base, BLK_MODE_SETTING);
 	i2s_dev->reg_ctx->frame_setting = i2s_read_reg(i2s_dev->i2s_base, FRAME_SETTING);
 	i2s_dev->reg_ctx->slot_setting1 = i2s_read_reg(i2s_dev->i2s_base, SLOT_SETTING1);
@@ -1322,6 +1377,12 @@ static int cvi_i2s_pm_resume(struct device *dev)
 	i2s_write_reg(i2s_dev->i2s_base, I2S_CLK_CTRL1, i2s_dev->reg_ctx->i2c_clk_ctl1);
 	i2s_write_reg(i2s_dev->i2s_base, I2S_PCM_SYNTH, i2s_dev->reg_ctx->i2s_pcm_synth);
 
+	if (i2s_dev->real_status && i2s_dev->tx_substream) {
+		// start dma
+		snd_dmaengine_pcm_trigger(i2s_dev->tx_substream, SNDRV_PCM_TRIGGER_START);
+		//start i2s
+		i2s_start(i2s_dev, i2s_dev->tx_substream);
+	}
 	return 0;
 }
 
